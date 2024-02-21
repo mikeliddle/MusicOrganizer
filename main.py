@@ -13,6 +13,8 @@ def main(args):
     wma_to_mp3(path, delete)
     rename_track_titles(path)
     organize_files_by_artist_and_album(path)
+    if delete:
+        remove_empty_subdirectories(path)
 
 def parseArgs(args):
     if len(args) > 1:
@@ -63,7 +65,12 @@ def organize_files_by_artist_and_album(directory):
                                 audio = FLAC(file_path)
                             
                             if audio is not None:
-                                artist = audio["artist"][0]
+                                if "albumartist" in audio:
+                                    print("using album artist")
+                                    artist = audio["albumartist"][0]
+                                else:
+                                    artist = audio["artist"][0]
+
                             else:
                                 artist = "Unknown Artist"
                                 print(f"Couldn't find artist for {file}")
@@ -103,6 +110,22 @@ def organize_files_by_artist_and_album(directory):
                         os.makedirs(album_path, exist_ok=True)
                         os.rename(file_path, os.path.join(album_path, file))
                         print(f"Moved {file} to {album_path}")
+
+def remove_empty_subdirectories(directory):
+    print("Removing empty subdirectories")
+    changed = True
+    while changed:
+        changed = False
+        for root, dirs, _ in os.walk(directory, topdown=False):
+            for dir in dirs:
+                dir_path = os.path.join(root, dir)
+                if not os.listdir(dir_path):
+                    changed = True
+                    print(f"Removing empty subdirectory: {dir_path}")
+                    os.rmdir(dir_path)
+                    print(f"Removed empty subdirectory: {dir_path}")
+    print("Empty subdirectories removed")
+
 
 if __name__ == "__main__":
     main(argv)
