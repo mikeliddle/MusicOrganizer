@@ -12,7 +12,7 @@ def main(args):
     aiff_to_flac(path, delete)
     wma_to_mp3(path, delete)
     rename_track_titles(path)
-    organize_files_by_artist(path)
+    organize_files_by_artist_and_album(path)
 
 def parseArgs(args):
     if len(args) > 1:
@@ -48,12 +48,13 @@ def rename_track_titles(directory):
                     print(f"No Data for {file}")
                 
 
-def organize_files_by_artist(directory):
+def organize_files_by_artist_and_album(directory):
     print("organizing media files by artist")
     for root, dirs, files in os.walk(directory):
                 for file in files:
                     if file.endswith(".mp3") or file.endswith(".m4a") or file.endswith(".mp4") or file.endswith(".flac") or file.endswith(".wma") or file.endswith(".aiff") or file.endswith(".wav"):
                         file_path = os.path.join(root, file)
+                        artist = ""
                         try:
                             audio = None
                             if file.endswith(".mp3"):
@@ -64,17 +65,44 @@ def organize_files_by_artist(directory):
                             if audio is not None:
                                 artist = audio["artist"][0]
                             else:
-                                artist = "Unknown"
+                                artist = "Unknown Artist"
                                 print(f"Couldn't find artist for {file}")
+                            
                         except (KeyError, IndexError, ID3NoHeaderError) as e:
-                            artist = "Unknown"
+                            artist = "Unknown Artist"
                             print(f"Couldn't find artist for {file}")
                             print(f"Error: {e}")
+
+                        album = ""
+                        try:
+                            audio = None
+                            if file.endswith(".mp3"):
+                                audio = EasyID3(file_path)
+                            elif file.endswith(".flac"):
+                                audio = FLAC(file_path)
+                            
+                            if audio is not None:
+                                album = audio["album"][0]
+                            else:
+                                album = "Unknown Album"
+                                print(f"Couldn't find album for {file}")
+                            
+                        except (KeyError, IndexError, ID3NoHeaderError) as e:
+                            album = "Unknown Album"
+                            print(f"Couldn't find album for {file}")
+                            print(f"Error: {e}")
+                        
+
+
                         print(f"Moving {file} to {artist}")
+                        artist.replace("/", "-")
+                        album.replace("/", "-")
                         artist_path = os.path.join(directory, artist)
+                        album_path = os.path.join(artist_path, album)
                         os.makedirs(artist_path, exist_ok=True)
-                        os.rename(file_path, os.path.join(artist_path, file))
-                        print(f"Moved {file} to {artist}")
+                        os.makedirs(album_path, exist_ok=True)
+                        os.rename(file_path, os.path.join(album_path, file))
+                        print(f"Moved {file} to {album_path}")
 
 if __name__ == "__main__":
     main(argv)
