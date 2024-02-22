@@ -8,11 +8,14 @@ from mutagen.flac import FLAC
 def main(args):
     print("Converting mp4 files to mp3 files")
     path, delete = parseArgs(args)
+
     mp4_to_mp3(path, delete)
     aiff_to_flac(path, delete)
     wma_to_mp3(path, delete)
+    
     rename_track_titles(path)
     organize_files_by_artist_and_album(path)
+    
     if delete:
         remove_empty_subdirectories(path)
 
