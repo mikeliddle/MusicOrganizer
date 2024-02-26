@@ -40,15 +40,15 @@ def rename_track_titles(directory):
                         audio = EasyID3(file_path)
                     elif file.endswith(".flac"):
                         audio = FLAC(file_path)
+                    if audio is not None:
+                        title = audio["title"][0]
+                        if "/" in title:
+                            title = title.replace("/", "-")
 
-                    title = audio["title"][0]
-                    if "/" in title:
-                        title = title.replace("/", "-")
-
-                    filename = title + "." + file.split(".")[1]
-                    print(f"Renaming {file} to {filename}")
-                    os.rename(file_path, os.path.join(root, filename))
-                    print(f"Renamed {file} to {filename}")
+                        filename = title + "." + file.split(".")[1]
+                        print(f"Renaming {file} to {filename}")
+                        os.rename(file_path, os.path.join(root, filename))
+                        print(f"Renamed {file} to {filename}")
                 except (KeyError, IndexError, ID3NoHeaderError):
                     print(f"No Data for {file}")
                 
