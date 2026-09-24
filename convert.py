@@ -1,75 +1,104 @@
+import errno
 import os
+import shutil
 import subprocess
+import sys
+import tempfile
 
-def mp4_to_mp3(directory, delete=False):
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".mp4") or file.endswith(".m4a"):
-                mp4_path = os.path.join(root, file)
-                mp3_path = os.path.splitext(mp4_path)[0] + ".mp3"
-                if not os.path.exists(mp3_path):
-                    print(f"Converting {mp4_path} to {mp3_path}")
-                    result = subprocess.run(["ffmpeg", "-i", mp4_path, mp3_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if result.returncode == 0:
-                        print("Conversion succeeded")
-                        if delete:
-                            os.remove(mp4_path)
-                            print(f"Deleted {mp4_path}")
-                        print(f"Converted {mp4_path} to {mp3_path}")
-                    else:
-                        print("Conversion failed")
-                    
-                
-def aiff_to_flac(directory, delete=False):
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".aiff"):
-                aiff_path = os.path.join(root, file)
-                flac_path = os.path.splitext(aiff_path)[0] + ".flac"
-                if not os.path.exists(flac_path):
-                    print(f"Converting {aiff_path} to {flac_path}")
-                    result = subprocess.run(["ffmpeg", "-i", aiff_path, flac_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if result.returncode == 0:
-                        print("Conversion succeeded")
-                        if delete:
-                            os.remove(aiff_path)
-                            print(f"Deleted {aiff_path}")
-                        print(f"Converted {aiff_path} to {flac_path}")
-                    else:
-                        print("Conversion failed")
 
-def wav_to_flac(directory, delete=False):
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".wav"):
-                wav_path = os.path.join(root, file)
-                flac_path = os.path.splitext(wav_path)[0] + ".flac"
-                if not os.path.exists(flac_path):
-                    print(f"Converting {wav_path} to {flac_path}")
-                    result = subprocess.run(["ffmpeg", "-i", wav_path, flac_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if result.returncode == 0:
-                        print("Conversion succeeded")
-                        if delete:
-                            os.remove(wav_path)
-                            print(f"Deleted {wav_path}")
-                        print(f"Converted {wav_path} to {flac_path}")
-                    else:
-                        print("Conversion failed")
+def numbered_destinations(destination):
+    stem, extension = os.path.splitext(destination)
+    yield destination
+    number = 2
+    while True:
+        yield f"{stem} ({number}){extension}"
+        number += 1
 
-def wma_to_mp3(directory, delete=False):
-    for root, _, files in os.walk(directory):
-        for file in files:
-            if file.endswith(".wma"):
-                wma_path = os.path.join(root, file)
-                mp3_path = os.path.splitext(wma_path)[0] + ".mp3"
-                if not os.path.exists(mp3_path):
-                    print(f"Converting {wma_path} to {mp3_path}")
-                    result = subprocess.run(["ffmpeg", "-i", wma_path, mp3_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    if result.returncode == 0:
-                        print("Conversion succeeded")
-                        if delete:
-                            os.remove(wma_path)
-                            print(f"Deleted {wma_path}")
-                        print(f"Converted {wma_path} to {mp3_path}")
-                    else:
-                        print("Conversion failed")
+
+def publish_no_overwrite(source, destination):
+    for candidate in numbered_destinations(destination):
+        try:
+            try:
+                os.link(source, candidate)
+            except OSError as exc:
+                if exc.errno not in (errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS):
+                    raise
+                created = False
+                try:
+                    with open(candidate, "xb") as output_file:
+                        created = True
+                        with open(source, "rb") as input_file:
+                            shutil.copyfileobj(input_file, output_file)
+                except BaseException:
+                    if created:
+                        os.unlink(candidate)
+                    raise
+            return candidate
+        except FileExistsError:
+            continue
+
+
+def convert_file(source, target_extension, delete=False):
+    destination = os.path.splitext(source)[0] + target_extension
+    handle, temporary = tempfile.mkstemp(prefix=".music-organizer-", suffix=target_extension, dir=os.path.dirname(source))
+    os.close(handle)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", source, "-y", temporary],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed for {source}: {result.stderr.strip() or result.returncode}")
+        if not os.path.isfile(temporary) or os.path.getsize(temporary) == 0:
+            raise RuntimeError(f"ffmpeg produced no output for {source}")
+        output = publish_no_overwrite(temporary, destination)
+        if delete:
+            os.unlink(source)
+        print(f"Converted {source} to {output}")
+        return output
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def _convert(directory, extensions, target_extension, delete=False, errors=None, skip=None, converted=None):
+    failed_sources = set()
+    for current, dirs, files in os.walk(directory):
+        dirs[:] = [name for name in dirs if not os.path.islink(os.path.join(current, name))]
+        for name in files:
+            if os.path.splitext(name)[1].lower() not in extensions:
+                continue
+            source = os.path.join(current, name)
+            if os.path.islink(source):
+                continue
+            try:
+                if skip is not None and skip(source):
+                    continue
+                output = convert_file(source, target_extension, delete)
+                if converted is not None and not delete:
+                    converted[source] = output
+            except (OSError, RuntimeError) as exc:
+                if errors is None:
+                    raise
+                failed_sources.add(source)
+                message = f"{source}: {exc}"
+                print(f"Error: {message}", file=sys.stderr)
+                errors.append(message)
+    return failed_sources
+
+
+def mp4_to_mp3(directory, delete=False, errors=None, skip=None, converted=None):
+    return _convert(directory, {".mp4", ".m4a"}, ".mp3", delete, errors, skip, converted)
+
+
+def aiff_to_flac(directory, delete=False, errors=None, skip=None, converted=None):
+    return _convert(directory, {".aiff"}, ".flac", delete, errors, skip, converted)
+
+
+def wav_to_flac(directory, delete=False, errors=None, skip=None, converted=None):
+    return _convert(directory, {".wav"}, ".flac", delete, errors, skip, converted)
+
+
+def wma_to_mp3(directory, delete=False, errors=None, skip=None, converted=None):
+    return _convert(directory, {".wma"}, ".mp3", delete, errors, skip, converted)
