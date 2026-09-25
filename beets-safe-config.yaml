@@ -1,0 +1,10 @@
+# Layered over the user's Beets configuration; prevent import-time file removal.
+import:
+  duplicate_action: skip
+  remux_mp3_in_wav: no
+  link: no
+  hardlink: no
+  reflink: no
+  timid: no
+  incremental: no
+  from_scratch: no

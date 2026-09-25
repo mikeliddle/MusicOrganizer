@@ -2,6 +2,7 @@ import errno
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 
@@ -11,6 +12,7 @@ from mutagen.flac import FLAC
 from mutagen.id3 import ID3NoHeaderError
 
 from convert import aiff_to_flac, mp4_to_mp3, publish_no_overwrite, wav_to_flac, wma_to_mp3
+from beets_tagging import tag_untagged
 
 
 MEDIA_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".flac", ".wma", ".aiff", ".wav"}
@@ -22,7 +24,7 @@ HISTORY_NAME = ".music-organizer-conversions.json"
 
 def parseArgs(args):
     if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "delete"):
-        raise ValueError("Usage: python main.py <directory> [delete]")
+        raise ValueError("Usage: python main.py <directory> [delete] [--tag-with-beets]")
     directory = os.path.abspath(args[1])
     if not os.path.isdir(directory) or os.path.islink(directory):
         raise ValueError(f"Not a directory (or is a link): {directory}")
@@ -54,6 +56,11 @@ def inside_library(directory, path):
 
 def main(args):
     try:
+        if args[1:].count("--tag-with-beets") > 1:
+            raise ValueError("Specify --tag-with-beets only once")
+        use_beets = "--tag-with-beets" in args[1:]
+        if use_beets:
+            args = [args[0], *(arg for arg in args[1:] if arg != "--tag-with-beets")]
         directory, delete = parseArgs(args)
     except ValueError as exc:
         print(exc, file=sys.stderr)
@@ -72,6 +79,11 @@ def main(args):
     except (OSError, ValueError) as exc:
         report_error(errors, history_path, exc)
         return 1
+    if use_beets:
+        beet = shutil.which("beet")
+        if beet is None:
+            report_error(errors, directory, "Beets not found on PATH; install beets or run without --tag-with-beets")
+            return 1
 
     def snapshot(path):
         info = os.stat(path)
@@ -94,9 +106,17 @@ def main(args):
     converted = {}
     for conversion in (mp4_to_mp3, aiff_to_flac, wav_to_flac, wma_to_mp3):
         failed_sources.update(conversion(directory, delete, errors, None if delete else skip_conversion, converted))
+    tagging_failed = False
+    if use_beets:
+        try:
+            tag_untagged(directory, failed_sources, beet, inside_library)
+        except (OSError, RuntimeError, MutagenError) as exc:
+            report_error(errors, directory, exc)
+            tagging_failed = True
     moved = {}
-    organize_files_by_artist_and_album(directory, errors, failed_sources, moved)
-    remove_empty_subdirectories(directory, errors)
+    if not tagging_failed:
+        organize_files_by_artist_and_album(directory, errors, failed_sources, moved)
+        remove_empty_subdirectories(directory, errors)
     if not delete and (converted or moved and history):
         try:
             updated = {}
