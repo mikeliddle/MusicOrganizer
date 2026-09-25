@@ -32,7 +32,9 @@ tagged; their MP3/FLAC outputs are eligible. Files whose conversion failed are
 not sent to Beets or moved by this run.
 
 Beets is invoked in singleton, quiet mode with `-C -M` (no copy or move),
-`--quiet-fallback skip`, and tag writing enabled. A bundled configuration
+`--quiet-fallback skip`, and `-a -w` to enable autotagging and tag writing even
+if those options are disabled in your Beets config. `-P` disables resuming
+older imports. A bundled configuration
 overlay disables duplicate replacement, remuxing, and link creation; it is
 merged with your existing Beets config so your configured matching plugins and
 library database still apply. Beets can update other metadata fields on

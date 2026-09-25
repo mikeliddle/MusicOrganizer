@@ -49,6 +49,7 @@ def tag_untagged(directory, skip_sources, executable, inside_library):
     print(f"Beets: found {len(eligible)} untagged MP3/FLAC files")
     tagged_count = 0
     for path in eligible:
+        # -a and -w override user settings that would disable this opt-in step.
         command = [
             executable, "--config", str(SAFE_CONFIG), "import",
             "-C", "-M", "-s", "-q", "-a", "-w", "-P",
