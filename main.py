@@ -13,6 +13,7 @@ from mutagen.id3 import ID3NoHeaderError
 
 from convert import aiff_to_flac, mp4_to_mp3, publish_no_overwrite, wav_to_flac, wma_to_mp3
 from beets_tagging import tag_untagged
+from lyrics_fetching import existing_lyrics_paths, fetch_missing_lyrics, prepare_lyrics
 
 
 MEDIA_EXTENSIONS = {".mp3", ".m4a", ".mp4", ".flac", ".wma", ".aiff", ".wav"}
@@ -24,7 +25,7 @@ HISTORY_NAME = ".music-organizer-conversions.json"
 
 def parseArgs(args):
     if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "delete"):
-        raise ValueError("Usage: python main.py <directory> [delete] [--tag-with-beets]")
+        raise ValueError("Usage: python main.py <directory> [delete] [--tag-with-beets] [--fetch-lyrics]")
     directory = os.path.abspath(args[1])
     if not os.path.isdir(directory) or os.path.islink(directory):
         raise ValueError(f"Not a directory (or is a link): {directory}")
@@ -56,11 +57,12 @@ def inside_library(directory, path):
 
 def main(args):
     try:
-        if args[1:].count("--tag-with-beets") > 1:
-            raise ValueError("Specify --tag-with-beets only once")
+        for flag in ("--tag-with-beets", "--fetch-lyrics"):
+            if args[1:].count(flag) > 1:
+                raise ValueError(f"Specify {flag} only once")
         use_beets = "--tag-with-beets" in args[1:]
-        if use_beets:
-            args = [args[0], *(arg for arg in args[1:] if arg != "--tag-with-beets")]
+        use_lyrics = "--fetch-lyrics" in args[1:]
+        args = [args[0], *(arg for arg in args[1:] if arg not in ("--tag-with-beets", "--fetch-lyrics"))]
         directory, delete = parseArgs(args)
     except ValueError as exc:
         print(exc, file=sys.stderr)
@@ -84,6 +86,14 @@ def main(args):
         if beet is None:
             report_error(errors, directory, "Beets not found on PATH; install beets or run without --tag-with-beets")
             return 1
+    if use_lyrics:
+        try:
+            lyrics_plugin = prepare_lyrics()
+        except (RuntimeError, ValueError) as exc:
+            report_error(errors, directory, exc)
+            return 1
+    deferred_delete = delete and use_lyrics
+    converted = {}
 
     def snapshot(path):
         info = os.stat(path)
@@ -97,27 +107,52 @@ def main(args):
         if not isinstance(output, str):
             return False
         output_path = os.path.join(directory, output)
-        return (
+        valid = (
             inside_library(directory, output_path)
             and os.path.isfile(output_path)
             and entry.get("result") == snapshot(output_path)
         )
+        if valid and deferred_delete:
+            converted[source] = output_path
+        return valid
 
-    converted = {}
     for conversion in (mp4_to_mp3, aiff_to_flac, wav_to_flac, wma_to_mp3):
-        failed_sources.update(conversion(directory, delete, errors, None if delete else skip_conversion, converted))
+        failed_sources.update(conversion(
+            directory, delete and not deferred_delete, errors,
+            skip_conversion if deferred_delete or not delete else None, converted,
+        ))
     tagging_failed = False
     if use_beets:
         try:
-            tag_untagged(directory, failed_sources, beet, inside_library)
+            protected = existing_lyrics_paths(directory, failed_sources, inside_library) if use_lyrics else set()
+            if protected:
+                print(f"Lyrics: preserving {len(protected)} already-lyriced files from Beets tagging")
+            tag_untagged(directory, failed_sources | protected, beet, inside_library)
         except (OSError, RuntimeError, MutagenError) as exc:
             report_error(errors, directory, exc)
             tagging_failed = True
+    if use_lyrics and not tagging_failed:
+        try:
+            fetch_missing_lyrics(directory, failed_sources, lyrics_plugin, inside_library)
+        except (OSError, RuntimeError, MutagenError) as exc:
+            report_error(errors, directory, exc)
+            tagging_failed = True
+    if deferred_delete and not tagging_failed:
+        for source, output in converted.items():
+            try:
+                if not inside_library(directory, source) or not inside_library(directory, output):
+                    raise ValueError("Conversion path left library root")
+                if not os.path.isfile(source) or not os.path.isfile(output) or os.path.getsize(output) == 0:
+                    raise ValueError("Converted source or output is missing")
+                os.unlink(source)
+            except (OSError, ValueError) as exc:
+                report_error(errors, source, exc)
+                tagging_failed = True
     moved = {}
     if not tagging_failed:
         organize_files_by_artist_and_album(directory, errors, failed_sources, moved)
         remove_empty_subdirectories(directory, errors)
-    if not delete and (converted or moved and history):
+    if (not delete or (deferred_delete and tagging_failed)) and (converted or (moved and history)):
         try:
             updated = {}
             for source, entry in history.items():

@@ -58,6 +58,54 @@ Beets' `fromfilename` plugin can search based on filenames containing artist
 and title. For review rather than automatic strong-match acceptance, run
 `beet import -C -M -s -t <file>` manually (this is separate from the organizer).
 
+### Optional lyrics fetching
+
+Install [Beets' lyrics plugin](https://beets.readthedocs.io/en/stable/plugins/lyrics.html)
+and its dependencies **in the same Python environment** as MusicOrganizer
+(`python -m pip install "beets[lyrics]>=2.14.1"`). Opt in separately
+from tagging:
+
+```text
+python main.py <directory> [delete] --fetch-lyrics
+python main.py <directory> [delete] --tag-with-beets --fetch-lyrics
+```
+
+After conversion and optional Beets tagging, but before organization, this
+checks all MP3 and FLAC files under the selected directory. Files with existing
+embedded lyrics (including synchronized ID3 lyrics) are left untouched. For
+files without lyrics, the Beets lyrics plugin uses their **artist and title
+tags** (plus album and duration when a source needs them) to search its
+configured providers. This does not require missing artist, album, or title
+metadata, nor does it import files into Beets, update the Beets library, or
+retag their identifying metadata. Files missing an artist, title, or readable
+duration are reported and skipped; filenames are never guessed as identifiers.
+No match leaves the file unchanged.
+When combined with `--tag-with-beets`, files that already have embedded lyrics
+are kept out of the Beets import as well, so tagging cannot replace those lyrics.
+
+Found lyrics are embedded as MP3 ID3 `USLT` or FLAC Vorbis `LYRICS`. If your
+Beets `lyrics.synced` setting is enabled and a provider returns timestamped
+lyrics, MP3 files also receive `SYLT`; timestamped text remains in `USLT` and
+`LYRICS`. Navidrome clients can read embedded lyrics, but display of plain
+versus synchronized lyrics depends on the client. Beets' `lyrics.sources` and
+other lyrics-provider settings come from your normal Beets configuration
+(locate it with `beet config -p`); neither the `lyrics` plugin name in
+`plugins:` nor a Beets database entry is needed for this standalone pass.
+Sources require network access and may have their own availability, usage, and
+licensing terms; choose providers you are allowed to use. The default Beets
+sources may include third-party HTML sources as well as lyric APIs. For an
+API-only source, configure `lyrics.sources: [lrclib]` in Beets. No credentials
+are required for LRCLIB. This tool does not scrape services itself.
+
+Missing Beets or provider/configuration errors produce a nonzero exit status
+and stop the run before organization; a missing Beets installation is detected
+before conversion. With `delete`, converted originals are only removed after
+the lyrics pass succeeds. On lookup failure they remain available, and
+conversion history lets a retry reuse the converted outputs. Failed conversions
+remain excluded from the lyrics pass. A no-match or missing lookup tags are
+reported as skips, not failures. Back up the library before opting in to any
+metadata writing.
+
 MP4/M4A and WMA are converted to MP3; AIFF and WAV are converted to FLAC.
 Without `delete`, originals are retained. With `delete`, a source is removed
 only after its conversion has succeeded and a nonempty output has been safely
